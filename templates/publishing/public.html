@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+{% block title %}填写问卷 · {{ survey.title }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="badge">{{ survey.statusLabel }}</p>
+  <h1>{{ survey.title }}</h1>
+  <p>{{ survey.description or "暂无问卷说明。" }}</p>
+
+  {% if state == "open" %}
+    {% if current_user %}
+      <p class="muted">当前登录用户：{{ current_user.username }}</p>
+    {% else %}
+      <p class="muted">该问卷允许匿名填写。</p>
+    {% endif %}
+    <p class="muted">
+      {{ "本问卷允许同一人重复填写。" if survey.allowMultipleResponses else "同一身份只能提交一次。" }}
+    </p>
+    <div id="fill-app">
+      <div id="question-area"></div>
+      <div id="fill-error" class="flash flash-error" style="display:none"></div>
+      <div class="actions" id="next-actions">
+        <button type="button" id="next-button">下一题</button>
+      </div>
+      <div id="finish-panel" style="display:none">
+        <div class="notice">所有题目已完成，可以提交答卷。</div>
+        <button type="button" id="submit-button">提交问卷</button>
+      </div>
+      <div id="success-panel" class="notice" style="display:none">
+        答卷已提交，感谢填写。
+      </div>
+    </div>
+    <script id="survey-data" type="application/json">{{ survey_data|tojson }}</script>
+    <script>
+      (() => {
+        const survey = JSON.parse(
+          document.getElementById("survey-data").textContent
+        );
+        const submitUrl = {{ submit_url|tojson }};
+        const csrfToken = {{ csrf_value|tojson }};
+        const submissionToken = (
+          window.crypto && typeof window.crypto.randomUUID === "function"
+            ? window.crypto.randomUUID()
+            : `fallback-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        );
+        const questions = survey.questions || [];
+        const byId = new Map(questions.map((question) => [question.id, question]));
+        const rulesBySource = new Map();
+        for (const rule of survey.rules || []) {
+          if (!rulesBySource.has(rule.fromQuestionId)) {
+            rulesBySource.set(rule.fromQuestionId, []);
+          }
+          rulesBySource.get(rule.fromQuestionId).push(rule);
+        }
+        for (const rules of rulesBySource.values()) {
+          rules.sort((left, right) => left.priority - right.priority);
+        }
+
+        const area = document.getElementById("question-area");
+        const errorBox = document.getElementById("fill-error");
+        const nextActions = document.getElementById("next-actions");
+        const nextButton = document.getElementById("next-button");
+        const finishPanel = document.getElementById("finish-panel");
+        const submitButton = document.getElementById("submit-button");
+        const successPanel = document.getElementById("success-panel");
+        const answers = {};
+        let currentId = survey.startQuestionId || questions[0]?.id || null;
+        let advancing = false;
+        let autoAdvanceTimer = null;
+
+        const hasAnswer = (value) => {
+          if (value === null || value === undefined) {
+            return false;
+          }
+          if (typeof value === "string") {
+            return value.trim() !== "";
+          }
+          if (Array.isArray(value)) {
+            return value.length > 0;
+          }
+          return true;
+        };
+
+        const showError = (message) => {
+          errorBox.textContent = message;
+          errorBox.style.display = "block";
+        };
+
+        const clearError = () => {
+          errorBox.textContent = "";
+          errorBox.style.display = "none";
+        };
+
+        const clauseMatches = (clause) => {
+          const actual = answers[clause.questionId];
+          if (!hasAnswer(actual)) {
+            return false;
+          }
+          const operator = clause.operator;
+          if (operator === "eq") {
+            if (typeof clause.value === "number") {
+              return Number(actual) === Number(clause.value);
+            }
+            return String(actual) === String(clause.value);
+          }
+          if (operator === "includes_any") {
+            return Array.isArray(actual)
+              && clause.values.some((value) => actual.includes(value));
+          }
+          if (operator === "includes_all") {
+            return Array.isArray(actual)
+              && clause.values.every((value) => actual.includes(value));
+          }
+          if (operator === "between") {
+            const number = Number(actual);
+            return Number.isFinite(number)
+              && number >= Number(clause.min)
+              && number <= Number(clause.max);
+          }
+          if (operator === "integer") {
+            const number = Number(actual);
+            return Number.isInteger(number);
+          }
+          const number = Number(actual);
+          const expected = Number(clause.value);
+          if (!Number.isFinite(number) || !Number.isFinite(expected)) {
+            return false;
+          }
+          return {
+            gt: number > expected,
+            gte: number >= expected,
+            lt: number < expected,
+            lte: number <= expected,
+          }[operator] || false;
+        };
+
+        const ruleMatches = (rule) => {
+          const clauses = rule.when?.clauses || [];
+          if (!clauses.length) {
+            return false;
+          }
+          const results = clauses.map(clauseMatches);
+          return rule.when?.match === "any"
+            ? results.some(Boolean)
+            : results.every(Boolean);
+        };
+
+        const nextId = (questionId) => {
+          const rules = rulesBySource.get(questionId) || [];
+          for (const rule of rules) {
+            if (!ruleMatches(rule)) {
+              continue;
+            }
+            if (rule.action?.type === "end") {
+              return "END";
+            }
+            if (rule.action?.type === "jump") {
+              return rule.action.targetQuestionId;
+            }
+          }
+          const index = questions.findIndex(
+            (question) => question.id === questionId
+          );
+          return index >= 0 && index + 1 < questions.length
+            ? questions[index + 1].id
+            : "END";
+        };
+
+        const validateCurrent = (question) => {
+          const value = answers[question.id];
+          const config = question.config || {};
+          if (!hasAnswer(value)) {
+            if (
+              question.required
+              || (
+                question.type === "multiple_choice"
+                && (config.minSelections || 0) > 0
+              )
+            ) {
+              return "这道题是必填题。";
+            }
+            return null;
+          }
+          if (question.type === "multiple_choice") {
+            const minimum = config.minSelections || 0;
+            const maximum = config.maxSelections;
+            if (value.length < minimum) {
+              return `至少选择 ${minimum} 项。`;
+            }
+            if (maximum !== null && maximum !== undefined && value.length > maximum) {
+              return `最多选择 ${maximum} 项。`;
+            }
+          }
+          if (question.type === "text") {
+            const length = value.trim().length;
+            if (config.minLength && length < config.minLength) {
+              return `至少填写 ${config.minLength} 个字。`;
+            }
+            if (
+              config.maxLength !== null
+              && config.maxLength !== undefined
+              && length > config.maxLength
+            ) {
+              return `不能超过 ${config.maxLength} 个字。`;
+            }
+          }
+          if (question.type === "number") {
+            const number = Number(value);
+            if (!Number.isFinite(number)) {
+              return "请填写有效数字。";
+            }
+            if (config.integerOnly && !Number.isInteger(number)) {
+              return "只能填写整数。";
+            }
+            if (config.min !== null && config.min !== undefined && number < Number(config.min)) {
+              return `不能小于 ${config.min}。`;
+            }
+            if (config.max !== null && config.max !== undefined && number > Number(config.max)) {
+              return `不能大于 ${config.max}。`;
+            }
+          }
+          return null;
+        };
+
+        const addHint = (text) => {
+          const hint = document.createElement("p");
+          hint.className = "muted";
+          hint.textContent = text;
+          area.appendChild(hint);
+        };
+
+        const renderQuestion = () => {
+          const question = byId.get(currentId);
+          if (!question) {
+            showFinish();
+            return;
+          }
+          clearError();
+          area.innerHTML = "";
+          const title = document.createElement("h2");
+          title.textContent = `${question.order}. ${question.title}${question.required ? " *" : ""}`;
+          area.appendChild(title);
+
+          if (question.type === "single_choice") {
+            for (const option of question.options || []) {
+              const label = document.createElement("label");
+              label.className = "choice-row";
+              const input = document.createElement("input");
+              input.type = "radio";
+              input.name = `answer_${question.id}`;
+              input.value = option.id;
+              input.checked = answers[question.id] === option.id;
+              input.addEventListener("change", () => {
+                answers[question.id] = option.id;
+                if (autoAdvanceTimer) {
+                  clearTimeout(autoAdvanceTimer);
+                }
+                autoAdvanceTimer = setTimeout(() => {
+                  autoAdvanceTimer = null;
+                  goNext();
+                }, 180);
+              });
+              label.appendChild(input);
+              label.appendChild(document.createTextNode(` ${option.label}`));
+              area.appendChild(label);
+            }
+          } else if (question.type === "multiple_choice") {
+            const selected = new Set(
+              Array.isArray(answers[question.id]) ? answers[question.id] : []
+            );
+            for (const option of question.options || []) {
+              const label = document.createElement("label");
+              label.className = "choice-row";
+              const input = document.createElement("input");
+              input.type = "checkbox";
+              input.value = option.id;
+              input.checked = selected.has(option.id);
+              input.addEventListener("change", () => {
+                const values = new Set(
+                  Array.isArray(answers[question.id]) ? answers[question.id] : []
+                );
+                if (input.checked) {
+                  values.add(option.id);
+                } else {
+                  values.delete(option.id);
+                }
+                answers[question.id] = Array.from(values);
+              });
+              label.appendChild(input);
+              label.appendChild(document.createTextNode(` ${option.label}`));
+              area.appendChild(label);
+            }
+            addHint(`至少选择 ${question.config?.minSelections || 0} 项。`);
+          } else if (question.type === "text") {
+            const input = document.createElement("textarea");
+            input.value = answers[question.id] || "";
+            input.addEventListener("input", () => {
+              answers[question.id] = input.value;
+            });
+            area.appendChild(input);
+            if (question.config?.maxLength) {
+              addHint(`最多 ${question.config.maxLength} 个字。`);
+            }
+          } else if (question.type === "number") {
+            const input = document.createElement("input");
+            input.type = "number";
+            input.step = question.config?.integerOnly ? "1" : "any";
+            input.value = answers[question.id] ?? "";
+            input.addEventListener("input", () => {
+              answers[question.id] = input.value;
+            });
+            area.appendChild(input);
+            const pieces = [];
+            if (question.config?.min !== null && question.config?.min !== undefined) {
+              pieces.push(`最小 ${question.config.min}`);
+            }
+            if (question.config?.max !== null && question.config?.max !== undefined) {
+              pieces.push(`最大 ${question.config.max}`);
+            }
+            if (question.config?.integerOnly) {
+              pieces.push("只能填整数");
+            }
+            if (pieces.length) {
+              addHint(pieces.join("，"));
+            }
+          }
+          nextActions.style.display = "flex";
+        };
+
+        const showFinish = () => {
+          clearError();
+          area.innerHTML = "";
+          nextActions.style.display = "none";
+          finishPanel.style.display = "block";
+        };
+
+        const goNext = () => {
+          if (advancing) {
+            return;
+          }
+          const question = byId.get(currentId);
+          if (!question) {
+            showFinish();
+            return;
+          }
+          const error = validateCurrent(question);
+          if (error) {
+            showError(error);
+            return;
+          }
+          if (!hasAnswer(answers[question.id])) {
+            delete answers[question.id];
+          }
+          advancing = true;
+          const target = nextId(question.id);
+          if (target === "END") {
+            showFinish();
+          } else {
+            currentId = target;
+            renderQuestion();
+          }
+          advancing = false;
+        };
+
+        nextButton.addEventListener("click", () => {
+          if (autoAdvanceTimer) {
+            clearTimeout(autoAdvanceTimer);
+            autoAdvanceTimer = null;
+          }
+          goNext();
+        });
+
+        submitButton.addEventListener("click", async () => {
+          submitButton.disabled = true;
+          clearError();
+          try {
+            const response = await fetch(submitUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken,
+              },
+              body: JSON.stringify({ answers, submissionToken }),
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+              throw new Error(payload?.error?.message || "提交失败，请重试。");
+            }
+            finishPanel.style.display = "none";
+            successPanel.style.display = "block";
+          } catch (error) {
+            submitButton.disabled = false;
+            showError(error.message || "提交失败，请重试。");
+          }
+        });
+
+        if (!questions.length) {
+          area.textContent = "问卷暂无题目。";
+          nextActions.style.display = "none";
+        } else {
+          renderQuestion();
+        }
+      })();
+    </script>
+  {% elif state == "expired" %}
+    <div class="notice warning">该问卷已过截止时间，不能再填写。</div>
+  {% elif state == "closed" %}
+    <div class="notice warning">该问卷已关闭，不能再填写。</div>
+  {% endif %}
+</section>
+{% endblock %}

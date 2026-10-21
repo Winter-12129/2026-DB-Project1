@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}请求未完成 · 问卷系统{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>请求未完成</h1>
+  <p>{{ error.message }}</p>
+  <p class="muted"><a href="{{ url_for('index') }}">返回首页</a></p>
+</section>
+{% endblock %}

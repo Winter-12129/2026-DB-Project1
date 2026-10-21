@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}我的问卷 · 问卷系统{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>我的问卷</h1>
+    <p class="muted">
+      账号：{{ current_user.username }} ·
+      注册时间：{{ current_user.createdAt | localdt }}
+    </p>
+  </div>
+  <a class="button" href="{{ url_for('surveys.create') }}">创建问卷</a>
+</div>
+<section class="card">
+  {% if surveys %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>标题</th>
+          <th>状态</th>
+          <th>填写权限</th>
+          <th>截止时间</th>
+          <th>创建时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for survey in surveys %}
+        <tr>
+          <td>{{ survey.title }}</td>
+          <td><span class="badge">{{ survey.statusLabel }}</span></td>
+          <td>{{ "允许匿名" if survey.allowAnonymous else "需登录" }}</td>
+          <td>{{ survey.deadlineText or "未设置" }}</td>
+          <td>{{ survey.createdAtText }}</td>
+          <td>
+            <a href="{{ url_for('surveys.detail', survey_id=survey.id) }}">管理</a>
+            ·
+            <a href="{{ url_for('analytics.survey_stats', survey_id=survey.id) }}">查看统计</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">还没有问卷。点击“创建问卷”开始。</div>
+  {% endif %}
+</section>
+{% endblock %}

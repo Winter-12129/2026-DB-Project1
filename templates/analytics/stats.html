@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}统计 · {{ survey.title }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ survey.title }}</h1>
+    <p class="muted">
+      版本 v{{ surveyVersion }} · 状态：{{ survey.statusLabel }} ·
+      已提交答卷 {{ totalResponses }} 份
+    </p>
+  </div>
+  <a class="button secondary" href="{{ url_for('surveys.index') }}">返回列表</a>
+</div>
+
+<section class="card">
+  <form method="get" action="{{ url_for('analytics.survey_stats', survey_id=survey.id) }}" class="stats-filter">
+    <label for="question-filter">查看范围</label>
+    <select id="question-filter" name="questionId" onchange="this.form.submit()">
+      <option value="">整卷统计</option>
+      {% for item in allQuestions %}
+        <option value="{{ item.questionId }}" {% if selectedQuestionId == item.questionId %}selected{% endif %}>
+          第 {{ item.order }} 题：{{ item.title }}
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit">查看</button>
+  </form>
+  <p class="muted">统计只包含已提交的答卷；跳转题目的分母使用实际访问人数和实际作答人数。</p>
+</section>
+
+{% for question in questions %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>第 {{ question.order }} 题：{{ question.title }}</h2>
+      <p class="muted">
+        {{ question.typeLabel }}
+        {% if question.required %}· 必选{% endif %}
+        · 访问 {{ question.visitedCount }} 人
+        · 回答 {{ question.answeredCount }} 人
+      </p>
+    </div>
+  </div>
+
+  {% if question.type in ["single_choice", "multiple_choice"] %}
+    <table>
+      <thead>
+        <tr><th>选项</th><th>选择人数</th><th>选择率</th></tr>
+      </thead>
+      <tbody>
+        {% for option in question.options %}
+        <tr>
+          <td>{{ option.label }}</td>
+          <td>{{ option.count }}</td>
+          <td>{{ "%.1f"|format(option.percentage) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if question.type == "multiple_choice" %}
+      <p class="muted">多选题目的一人可以选择多个选项，因此选择率之和可能超过 100%。</p>
+    {% endif %}
+  {% elif question.type == "text" %}
+    {% if question.textAnswers %}
+      <ul class="answer-list">
+        {% for answer in question.textAnswers %}
+          <li>{{ answer }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">暂无文本答案。</p>
+    {% endif %}
+    {% if question.numeric and question.numeric.count %}
+      <p class="muted">
+        可识别数字 {{ question.numeric.count }} 个 ·
+        平均值 {{ "%.2f"|format(question.numeric.average) }}
+      </p>
+    {% endif %}
+  {% elif question.type == "number" %}
+    {% if question.numeric and question.numeric.count %}
+      <div class="number-summary">
+        <div><span class="muted">有效数字</span><strong>{{ question.numeric.count }}</strong></div>
+        <div><span class="muted">平均值</span><strong>{{ "%.2f"|format(question.numeric.average) }}</strong></div>
+        <div><span class="muted">最小值</span><strong>{{ "%.2f"|format(question.numeric.min) }}</strong></div>
+        <div><span class="muted">最大值</span><strong>{{ "%.2f"|format(question.numeric.max) }}</strong></div>
+      </div>
+    {% else %}
+      <p class="muted">暂无数字答案。</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% else %}
+<section class="card">
+  <p class="muted">这份问卷还没有题目。</p>
+</section>
+{% endfor %}
+{% endblock %}

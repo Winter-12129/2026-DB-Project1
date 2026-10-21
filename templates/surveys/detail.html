@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}管理问卷 · {{ survey.title }}{% endblock %}
+{% block content %}
+{% set share_url = url_for('publishing.public_survey', share_code=survey.shareCode, _external=True) %}
+<div class="page-head">
+  <div>
+    <h1>{{ survey.title }}</h1>
+    <p class="muted">
+      <span class="badge">{{ survey.statusLabel }}</span>
+      {% if survey.isExpired %}· 已过截止时间{% endif %}
+    </p>
+  </div>
+  <a class="button secondary" href="{{ url_for('surveys.index') }}">返回列表</a>
+</div>
+
+{% if can_edit and not questions %}
+<div class="notice">
+  问卷已创建。下一步先在下方添加题目，再配置跳转规则并发布。
+</div>
+{% endif %}
+
+<section class="card">
+  <h2>问卷信息</h2>
+  <dl class="meta">
+    <dt>问卷说明</dt>
+    <dd>{{ survey.description or "暂无说明" }}</dd>
+    <dt>填写权限</dt>
+    <dd>{{ "允许匿名填写" if survey.allowAnonymous else "必须登录后填写" }}</dd>
+    <dt>重复提交</dt>
+    <dd>{{ "允许同一人多次填写" if survey.allowMultipleResponses else "同一身份只能填写一次" }}</dd>
+    <dt>截止时间</dt>
+    <dd>{{ survey.deadlineText or "未设置" }}</dd>
+    <dt>创建时间</dt>
+    <dd>{{ survey.createdAtText }}</dd>
+    {% if survey.publishedAtText %}
+      <dt>发布时间</dt>
+      <dd>{{ survey.publishedAtText }}</dd>
+    {% endif %}
+    {% if survey.closedAtText %}
+      <dt>关闭时间</dt>
+      <dd>{{ survey.closedAtText }}</dd>
+    {% endif %}
+  </dl>
+
+  <label>分享链接</label>
+  <div class="copy-row">
+    <input id="share-link" value="{{ share_url }}" readonly>
+    <button type="button" class="button secondary" id="copy-link" data-copy="{{ share_url }}">复制链接</button>
+  </div>
+  {% if survey.status == "draft" %}
+    <p class="muted">链接已生成，但发布后才会对填写者开放。</p>
+  {% elif survey.status == "closed" %}
+    <p class="muted">问卷已关闭，链接会显示关闭提示。</p>
+  {% elif survey.isExpired %}
+    <p class="muted">问卷已过截止时间，链接会显示截止提示。</p>
+  {% else %}
+    <p class="muted">问卷正在收集，链接可以发给填写者。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">STEP 2 · 内容设计</p>
+      <h2>题目与跳转</h2>
+      <p class="muted">题目按顺序执行；无匹配规则时自动进入下一题。</p>
+    </div>
+    <span class="badge">{{ questions|length }} 道题</span>
+  </div>
+
+  {% for question in questions %}
+  <article class="question-card">
+    <div class="question-header">
+      <div>
+        <strong>第 {{ question.order }} 题</strong>
+        {{ question.title }}
+        {% if question.required %}<span class="badge required-badge">必选</span>{% endif %}
+      </div>
+      <span class="badge">{{ question.typeLabel }}</span>
+    </div>
+    <p class="muted">
+      {{ question.configSummary }}
+      {% if question.options %}
+        · 选项：
+        {% for option in question.options %}
+          {{ option.label }}{% if not loop.last %} / {% endif %}
+        {% endfor %}
+      {% endif %}
+    </p>
+
+    {% if question.rules %}
+    <div class="rule-list">
+      {% for rule in question.rules %}
+      <div class="rule-item">
+        <span><strong>P{{ rule.priority }}</strong> {{ rule.description }}</span>
+        {% if can_edit %}
+        <form method="post" action="{{ url_for('logic.delete_rule', survey_id=survey.id, rule_id=rule.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link-button">删除规则</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if can_edit %}
+      {% if question.type in ["single_choice", "multiple_choice", "number"] %}
+      <details class="rule-editor">
+        <summary>添加跳转规则</summary>
+        <form method="post" action="{{ url_for('logic.add_rule', survey_id=survey.id, question_id=question.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="form-grid">
+            <label>跳转到
+              <select name="target_question_id">
+                <option value="END">结束问卷</option>
+                {% for target in question.laterQuestions %}
+                  <option value="{{ target.id }}">第 {{ target.order }} 题：{{ target.title }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            {% if question.type == "single_choice" %}
+            <label>触发选项
+              <select name="option_id">
+                {% for option in question.options %}
+                  <option value="{{ option.id }}">{{ option.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            {% elif question.type == "multiple_choice" %}
+            <label>匹配方式
+              <select name="match">
+                <option value="any">包含任意选中项</option>
+                <option value="all">包含全部选中项</option>
+              </select>
+            </label>
+            {% elif question.type == "number" %}
+            <label>比较方式
+              <select name="operator">
+                <option value="gte">大于等于</option>
+                <option value="lte">小于等于</option>
+                <option value="gt">大于</option>
+                <option value="lt">小于</option>
+                <option value="eq">等于</option>
+                <option value="between">在范围内</option>
+              </select>
+            </label>
+            <label>比较值
+              <input name="value" type="number" step="any" placeholder="非范围条件填写">
+            </label>
+            <label>最小值
+              <input name="min_value" type="number" step="any" placeholder="范围条件填写">
+            </label>
+            <label>最大值
+              <input name="max_value" type="number" step="any" placeholder="范围条件填写">
+            </label>
+            {% endif %}
+
+            <label>优先级
+              <input name="priority" type="number" min="1" value="10" required>
+            </label>
+          </div>
+
+          {% if question.type == "multiple_choice" %}
+          <div class="inline-options">
+            <span class="muted">触发选项：</span>
+            {% for option in question.options %}
+            <label class="checkbox-row compact">
+              <input type="checkbox" name="option_ids" value="{{ option.id }}">
+              {{ option.label }}
+            </label>
+            {% endfor %}
+          </div>
+          {% endif %}
+          <button type="submit">添加规则</button>
+        </form>
+      </details>
+      {% else %}
+        <p class="muted">文本题暂不支持跳转条件。</p>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('questions.delete', survey_id=survey.id, question_id=question.id) }}" class="danger-zone">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="link-button danger-link">删除题目</button>
+      </form>
+    {% endif %}
+  </article>
+  {% else %}
+    <p class="muted">还没有题目。</p>
+  {% endfor %}
+
+  {% if can_edit %}
+  <div class="add-question">
+    <h3>添加题目</h3>
+    <form method="post" action="{{ url_for('questions.add', survey_id=survey.id) }}" id="question-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid">
+        <label>题型
+          <select name="type" id="question-type">
+            <option value="single_choice">单选</option>
+            <option value="multiple_choice">多选</option>
+            <option value="text">文本</option>
+            <option value="number">数字</option>
+          </select>
+        </label>
+        <label>题干
+          <input name="title" maxlength="300" required>
+        </label>
+      </div>
+      <label class="checkbox-row">
+        <input type="checkbox" name="required" value="1">
+        必选题
+      </label>
+
+      <div data-question-fields="single_choice multiple_choice">
+        <label>选项（每行一个）</label>
+        <textarea name="options" placeholder="选项 A&#10;选项 B&#10;选项 C"></textarea>
+      </div>
+
+      <div class="form-grid" data-question-fields="multiple_choice">
+        <label>最少选择数量
+          <input name="min_selections" type="number" min="0" value="0">
+        </label>
+        <label>最多选择数量
+          <input name="max_selections" type="number" min="0" placeholder="不填表示不限">
+        </label>
+      </div>
+
+      <div class="form-grid" data-question-fields="text">
+        <label>最少字数
+          <input name="min_length" type="number" min="0" value="0">
+        </label>
+        <label>最多字数
+          <input name="max_length" type="number" min="0" placeholder="不填表示不限">
+        </label>
+      </div>
+
+      <div class="form-grid" data-question-fields="number">
+        <label>最小值
+          <input name="min_number" type="number" step="any" placeholder="不填表示不限">
+        </label>
+        <label>最大值
+          <input name="max_number" type="number" step="any" placeholder="不填表示不限">
+        </label>
+      </div>
+      <label class="checkbox-row" data-question-fields="number">
+        <input type="checkbox" name="integer_only" value="1">
+        只能是整数
+      </label>
+
+      <button type="submit">添加题目</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
+
+{% if survey.canSetDeadline %}
+<section class="card">
+  <h2>设置截止时间</h2>
+  <form method="post" action="{{ url_for('publishing.set_deadline', survey_id=survey.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="deadline">截止时间</label>
+    <input id="deadline" type="datetime-local" name="deadline" value="{{ survey.deadlineInput }}">
+    <button type="submit">保存截止时间</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>问卷状态</h2>
+  {% if survey.canPublish %}
+    <p class="muted">发布后填写者才能通过链接访问。</p>
+    <form method="post" action="{{ url_for('publishing.publish', survey_id=survey.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">发布问卷</button>
+    </form>
+  {% elif survey.canClose %}
+    <p class="muted">关闭后不再接受新的填写，已有数据保留。</p>
+    <form method="post" action="{{ url_for('publishing.close', survey_id=survey.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="danger-button">关闭问卷</button>
+    </form>
+  {% else %}
+    <p class="muted">问卷已关闭，不能再次发布。</p>
+  {% endif %}
+</section>
+
+<script>
+  const copyButton = document.getElementById("copy-link");
+  if (copyButton) {
+    copyButton.addEventListener("click", async () => {
+      const link = copyButton.dataset.copy;
+      try {
+        await navigator.clipboard.writeText(link);
+        copyButton.textContent = "已复制";
+      } catch (error) {
+        const input = document.getElementById("share-link");
+        input.select();
+        document.execCommand("copy");
+        copyButton.textContent = "已复制";
+      }
+    });
+  }
+
+  const questionType = document.getElementById("question-type");
+  const updateQuestionFields = () => {
+    if (!questionType) {
+      return;
+    }
+    document.querySelectorAll("[data-question-fields]").forEach((element) => {
+      const types = element.dataset.questionFields.split(" ");
+      element.style.display = types.includes(questionType.value) ? "" : "none";
+    });
+  };
+  if (questionType) {
+    questionType.addEventListener("change", updateQuestionFields);
+    updateQuestionFields();
+  }
+</script>
+{% endblock %}
