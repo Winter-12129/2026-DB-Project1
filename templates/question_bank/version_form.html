@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}创建题目版本 · 问卷系统{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">题库版本 · v{{ base.number }}</p>
+  <h1>基于旧版本创建新版本</h1>
+  <p class="muted">保存后旧版本不会被覆盖；新版本会记录“基于 v{{ base.number }}”。</p>
+
+  <form method="post" action="{{ url_for('question_bank.new_version', family_id=family_id, base=base.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="base_version_id" value="{{ base.id }}">
+
+    <fieldset class="choice-box">
+      <legend>保存方式</legend>
+      <label class="checkbox-row">
+        <input type="radio" name="save_mode" value="new" {% if save_mode != 'replace' %}checked{% endif %}>
+        创建新版本，保留 v{{ base.number }} 与全部历史
+      </label>
+      <label class="checkbox-row">
+        <input type="radio" name="save_mode" value="replace" {% if save_mode == 'replace' %}checked{% endif %}>
+        直接修改 v{{ base.number }}，覆盖这个版本
+      </label>
+    </fieldset>
+
+    <div class="form-grid">
+      <label>题型
+        <select name="type">
+          <option value="single_choice" {% if base.type == 'single_choice' %}selected{% endif %}>单选</option>
+          <option value="multiple_choice" {% if base.type == 'multiple_choice' %}selected{% endif %}>多选</option>
+          <option value="text" {% if base.type == 'text' %}selected{% endif %}>文本</option>
+          <option value="number" {% if base.type == 'number' %}selected{% endif %}>数字</option>
+        </select>
+      </label>
+      <label>题干
+        <input name="title" value="{{ base.title }}" maxlength="300" required>
+      </label>
+    </div>
+
+    <label>选项（单选/多选使用，每行一个）</label>
+    <textarea name="options">{% for option in base.options %}{{ option.label }}{% if not loop.last %}&#10;{% endif %}{% endfor %}</textarea>
+
+    <div class="form-grid">
+      <label>最少选择数量
+        <input name="min_selections" type="number" min="0" value="{{ base.config.minSelections or 0 }}">
+      </label>
+      <label>最多选择数量
+        <input name="max_selections" type="number" min="0" value="{{ base.config.maxSelections if base.config.maxSelections is not none else '' }}">
+      </label>
+      <label>最少字数
+        <input name="min_length" type="number" min="0" value="{{ base.config.minLength or 0 }}">
+      </label>
+      <label>最多字数
+        <input name="max_length" type="number" min="0" value="{{ base.config.maxLength if base.config.maxLength is not none else '' }}">
+      </label>
+      <label>最小值
+        <input name="min_number" type="number" step="any" value="{{ base.config.min if base.config.min is not none else '' }}">
+      </label>
+      <label>最大值
+        <input name="max_number" type="number" step="any" value="{{ base.config.max if base.config.max is not none else '' }}">
+      </label>
+    </div>
+    <label class="checkbox-row">
+      <input type="checkbox" name="integer_only" value="1" {% if base.config.integerOnly %}checked{% endif %}>
+      数字题只能填整数
+    </label>
+
+    <button type="submit">保存修改</button>
+  </form>
+  <p class="muted"><a href="{{ url_for('question_bank.index') }}">返回题目库</a></p>
+</section>
+{% endblock %}

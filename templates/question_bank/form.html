@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}新建常用题目 · 问卷系统{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">题目库</p>
+  <h1>新建常用题目</h1>
+  <p class="muted">题目保存后可以在不同问卷中重复使用。相同题干的不同内容会作为同一题目族的新版本保存。</p>
+
+  <form method="post" action="{{ url_for('question_bank.new_family') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="form-grid">
+      <label>题型
+        <select name="type">
+          <option value="single_choice" {% if form.get('type') == 'single_choice' %}selected{% endif %}>单选</option>
+          <option value="multiple_choice" {% if form.get('type') == 'multiple_choice' %}selected{% endif %}>多选</option>
+          <option value="text" {% if form.get('type', 'text') == 'text' %}selected{% endif %}>文本</option>
+          <option value="number" {% if form.get('type') == 'number' %}selected{% endif %}>数字</option>
+        </select>
+      </label>
+      <label>题干
+        <input name="title" value="{{ form.get('title', '') }}" maxlength="300" required>
+      </label>
+    </div>
+
+    <label>选项（单选/多选使用，每行一个）</label>
+    <textarea name="options">{{ form.get('options', '') }}</textarea>
+
+    <div class="form-grid">
+      <label>最少选择数量
+        <input name="min_selections" type="number" min="0" value="{{ form.get('min_selections', 0) }}">
+      </label>
+      <label>最多选择数量
+        <input name="max_selections" type="number" min="0" value="{{ form.get('max_selections', '') }}" placeholder="不填表示不限">
+      </label>
+      <label>最少字数
+        <input name="min_length" type="number" min="0" value="{{ form.get('min_length', 0) }}">
+      </label>
+      <label>最多字数
+        <input name="max_length" type="number" min="0" value="{{ form.get('max_length', '') }}" placeholder="不填表示不限">
+      </label>
+      <label>最小值
+        <input name="min_number" type="number" step="any" value="{{ form.get('min_number', '') }}">
+      </label>
+      <label>最大值
+        <input name="max_number" type="number" step="any" value="{{ form.get('max_number', '') }}">
+      </label>
+    </div>
+    <label class="checkbox-row">
+      <input type="checkbox" name="integer_only" value="1" {% if form.get('integer_only') == '1' %}checked{% endif %}>
+      数字题只能填整数
+    </label>
+
+    <label>题目别名（可选，每行一个）
+      <textarea name="aliases" placeholder="例如：你的名字是">{{ form.get('aliases', '') }}</textarea>
+    </label>
+
+    <button type="submit">保存到题目库</button>
+  </form>
+  <p class="muted"><a href="{{ url_for('question_bank.index') }}">返回题目库</a></p>
+</section>
+{% endblock %}

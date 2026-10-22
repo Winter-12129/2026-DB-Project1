@@ -40,6 +40,9 @@
         · 回答 {{ question.answeredCount }} 人
       </p>
     </div>
+    {% if question.sourceBankId or question.sourceVersionId %}
+      <a class="button secondary" href="{{ url_for('question_bank.insights', reference=question.sourceVersionId or question.sourceBankId) }}">跨问卷分析</a>
+    {% endif %}
   </div>
 
   {% if question.type in ["single_choice", "multiple_choice"] %}

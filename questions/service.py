@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from common.errors import ConflictError, NotFoundError, ValidationError
 from common.ids import generate_option_id, generate_question_id
 from common.time_utils import utc_now
+from question_bank import service as bank_service
 from surveys import repository as survey_repository
 from surveys import service as survey_service
 
@@ -134,6 +135,46 @@ def add_question(survey_id, owner_id, form):
         "config": _build_config(question_type, form),
     }
 
+    questions = list(document.get("questions", []))
+    questions.append(question)
+    fields = {
+        "questions": questions,
+        "updatedAt": utc_now(),
+    }
+    if not document.get("startQuestionId"):
+        fields["startQuestionId"] = questions[0]["id"]
+    survey_repository.update_fields(document["_id"], fields)
+    return question
+
+
+def add_from_bank(survey_id, owner_id, version_id, required=False):
+    document = survey_service.get_owned_survey_doc(survey_id, owner_id)
+    _ensure_draft(document)
+    family, version = bank_service.get_accessible_version(owner_id, version_id)
+
+    existing = next(
+        (
+            item
+            for item in document.get("questions", [])
+            if item.get("sourceVersionId") == version.get("id")
+        ),
+        None,
+    )
+    if existing is not None:
+        raise ConflictError("这道题库题目已经添加到当前问卷")
+
+    question = {
+        "id": generate_question_id(),
+        "order": len(document.get("questions", [])) + 1,
+        "type": version["type"],
+        "title": version["title"],
+        "required": bool(required),
+        "options": list(version.get("options", [])),
+        "config": dict(version.get("config", {})),
+        "sourceBankId": str(family["_id"]),
+        "sourceVariantId": version["id"],
+        "sourceVersionId": version["id"],
+    }
     questions = list(document.get("questions", []))
     questions.append(question)
     fields = {

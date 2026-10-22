@@ -70,10 +70,28 @@ class FakeCollection:
         self.documents.append(stored)
         return SimpleNamespace(inserted_id=stored["_id"])
 
+    def _matches(self, document, key, value):
+        actual = document.get(key)
+        if isinstance(value, dict) and "$elemMatch" in value:
+            if not isinstance(actual, list):
+                return False
+            condition = value["$elemMatch"]
+            return any(
+                isinstance(item, dict)
+                and all(
+                    self._matches(item, field, expected)
+                    for field, expected in condition.items()
+                )
+                for item in actual
+            )
+        if isinstance(actual, list) and not isinstance(value, list):
+            return value in actual
+        return actual == value
+
     def find_one(self, filter_document):
         for document in self.documents:
             if all(
-                document.get(key) == value
+                self._matches(document, key, value)
                 for key, value in filter_document.items()
             ):
                 return document
@@ -85,7 +103,7 @@ class FakeCollection:
                 document
                 for document in self.documents
                 if all(
-                    document.get(key) == value
+                    self._matches(document, key, value)
                     for key, value in filter_document.items()
                 )
             ]
@@ -96,6 +114,14 @@ class FakeCollection:
         if document is None:
             return SimpleNamespace(modified_count=0)
         document.update(update_document.get("$set", {}))
+        for key, value in update_document.get("$addToSet", {}).items():
+            current = document.setdefault(key, [])
+            if value not in current:
+                current.append(value)
+        for key, value in update_document.get("$pull", {}).items():
+            current = document.get(key, [])
+            if isinstance(current, list) and value in current:
+                current.remove(value)
         return SimpleNamespace(modified_count=1)
 
     def count_documents(self, filter_document):
@@ -110,6 +136,16 @@ class FakeCollection:
             ]
         )
 
+    def delete_one(self, filter_document):
+        for index, document in enumerate(self.documents):
+            if all(
+                document.get(key) == value
+                for key, value in filter_document.items()
+            ):
+                self.documents.pop(index)
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
+
 
 class FakeDB:
     def __init__(self):
@@ -121,6 +157,7 @@ class FakeDB:
                 ("surveyId", "participantKey"),
             ]
         )
+        self.question_bank = FakeCollection()
 
 
 class FirstFeatureTest(unittest.TestCase):
@@ -842,6 +879,526 @@ class FirstFeatureTest(unittest.TestCase):
             q1["id"],
         )
 
+    def test_question_bank_create_directly(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
 
+        page = self.client.get("/question-bank/new")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("新建常用题目", page.get_data(as_text=True))
+
+        payload = {
+            "type": "single_choice",
+            "title": "常用联系方式",
+            "options": "电话\n邮件",
+            "aliases": "联系方式",
+        }
+        response = self.client.post(
+            "/question-bank/new",
+            data=payload,
+            follow_redirects=True,
+        )
+        self.assertIn("常用题目已保存", response.get_data(as_text=True))
+        self.assertEqual(len(self.db.question_bank.documents), 1)
+        family = self.db.question_bank.documents[0]
+        self.assertEqual(family["title"], "常用联系方式")
+        self.assertEqual(len(family["versions"]), 1)
+
+        response = self.client.post(
+            "/question-bank/new",
+            data=payload,
+            follow_redirects=True,
+        )
+        self.assertIn("未重复创建", response.get_data(as_text=True))
+        self.assertEqual(len(self.db.question_bank.documents), 1)
+        self.assertEqual(len(family["versions"]), 1)
+
+    def test_question_bank_dedupes_and_creates_versions(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "题库来源问卷")
+        survey = self.db.surveys.documents[0]
+
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="text",
+            title="姓名",
+            save_to_bank="1",
+            bank_aliases="你的名字是",
+        )
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="single_choice",
+            title="姓名",
+            options="A\nB",
+            save_to_bank="1",
+        )
+        # 通过别名加入且内容一致，不应新增第三个版本。
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="text",
+            title="你的名字是",
+            save_to_bank="1",
+        )
+
+        self.assertEqual(len(self.db.question_bank.documents), 1)
+        family = self.db.question_bank.documents[0]
+        self.assertEqual(len(family["versions"]), 2)
+        self.assertIn("你的名字是", family["aliases"])
+
+        response = self.client.get("/question-bank")
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("姓名", page)
+        self.assertIn("2 个版本", page)
+
+    def test_add_question_from_bank_to_another_survey(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "题库来源问卷")
+        first = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            first["_id"],
+            type="text",
+            title="姓名",
+            save_to_bank="1",
+        )
+        version_id = self.db.question_bank.documents[0]["versions"][0]["id"]
+
+        self.create_survey(self.client, "使用题库的新问卷")
+        second = self.db.surveys.documents[1]
+        response = self.client.post(
+            f"/surveys/{second['_id']}/questions/from-bank",
+            data={
+                "bank_version_id": version_id,
+                "required": "1",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(second["questions"]), 1)
+        question = second["questions"][0]
+        self.assertEqual(question["title"], "姓名")
+        self.assertEqual(question["sourceVersionId"], version_id)
+        self.assertTrue(question["required"])
+
+        # 同一题库版本不能在同一问卷里重复添加。
+        self.client.post(
+            f"/surveys/{second['_id']}/questions/from-bank",
+            data={"bank_version_id": version_id},
+            follow_redirects=True,
+        )
+        self.assertEqual(len(second["questions"]), 1)
+
+
+    def test_question_bank_sharing_between_users(self):
+        self.register(self.client, "bob")
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "共享来源问卷")
+        alice_survey = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            alice_survey["_id"],
+            type="text",
+            title="姓名",
+            save_to_bank="1",
+        )
+        family = self.db.question_bank.documents[0]
+        family_id = str(family["_id"])
+        version_id = family["versions"][0]["id"]
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/share",
+            data={"username": "bob"},
+            follow_redirects=True,
+        )
+        self.assertIn("已共享给 bob", response.get_data(as_text=True))
+        bob = next(
+            user for user in self.db.users.documents
+            if user["username"] == "bob"
+        )
+        self.assertIn(bob["_id"], family["sharedWith"])
+
+        self.client.post("/logout", follow_redirects=True)
+        self.login(self.client, "bob")
+        response = self.client.get("/question-bank")
+        text = response.get_data(as_text=True)
+        self.assertIn("共享给我的题目", text)
+        self.assertIn("来自 alice", text)
+
+        forbidden = self.client.get(
+            f"/question-bank/{family_id}/versions/new"
+        )
+        self.assertEqual(forbidden.status_code, 404)
+        self.assertEqual(len(family["versions"]), 1)
+
+        self.create_survey(self.client, "Bob 使用共享题目")
+        bob_survey = next(
+            survey for survey in self.db.surveys.documents
+            if survey["title"] == "Bob 使用共享题目"
+        )
+        response = self.client.post(
+            f"/surveys/{bob_survey['_id']}/questions/from-bank",
+            data={"bank_version_id": version_id, "required": "1"},
+            follow_redirects=True,
+        )
+        self.assertIn("已从题目库添加题目", response.get_data(as_text=True))
+        self.assertEqual(
+            bob_survey["questions"][0]["sourceVersionId"],
+            version_id,
+        )
+    def test_question_bank_versions_and_restore(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "版本来源问卷")
+        survey = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="text",
+            title="姓名",
+            save_to_bank="1",
+        )
+        family = self.db.question_bank.documents[0]
+        family_id = str(family["_id"])
+        base_id = family["currentVersionId"]
+        self.assertIsNotNone(base_id)
+
+        form_page = self.client.get(
+            f"/question-bank/{family_id}/versions/new?base={base_id}"
+        )
+        self.assertEqual(form_page.status_code, 200)
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/new",
+            data={
+                "base_version_id": base_id,
+                "type": "text",
+                "title": "请填写姓名",
+                "options": "",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("新版本已保存", response.get_data(as_text=True))
+        self.assertEqual(len(family["versions"]), 2)
+        new_version = family["versions"][1]
+        self.assertEqual(new_version["parentVersionId"], base_id)
+        self.assertEqual(family["currentVersionId"], new_version["id"])
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/{base_id}/restore",
+            follow_redirects=True,
+        )
+        self.assertIn("已切换当前版本", response.get_data(as_text=True))
+        self.assertEqual(family["currentVersionId"], base_id)
+        self.assertEqual(len(family["versions"]), 2)
+
+        self.create_survey(self.client, "使用旧版本问卷")
+        target = next(
+            item for item in self.db.surveys.documents
+            if item["title"] == "使用旧版本问卷"
+        )
+        response = self.client.post(
+            f"/surveys/{target['_id']}/questions/from-bank",
+            data={"bank_version_id": base_id},
+            follow_redirects=True,
+        )
+        self.assertIn("已从题目库添加题目", response.get_data(as_text=True))
+        self.assertEqual(
+            target["questions"][0]["sourceVersionId"],
+            base_id,
+        )
+
+    def test_question_version_can_replace_or_create(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "版本保存方式问卷")
+        survey = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="text",
+            title="姓名",
+            save_to_bank="1",
+        )
+        family = self.db.question_bank.documents[0]
+        family_id = str(family["_id"])
+        base_id = family["currentVersionId"]
+        original_snapshot_title = survey["questions"][0]["title"]
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/new",
+            data={
+                "base_version_id": base_id,
+                "save_mode": "replace",
+                "type": "text",
+                "title": "请填写姓名",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("当前版本内容已更新", response.get_data(as_text=True))
+        self.assertEqual(len(family["versions"]), 1)
+        self.assertEqual(family["versions"][0]["id"], base_id)
+        self.assertEqual(family["versions"][0]["title"], "请填写姓名")
+        self.assertEqual(survey["questions"][0]["title"], original_snapshot_title)
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/new",
+            data={
+                "base_version_id": base_id,
+                "save_mode": "new",
+                "type": "text",
+                "title": "姓名（新版）",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("新版本已保存", response.get_data(as_text=True))
+        self.assertEqual(len(family["versions"]), 2)
+        self.assertEqual(family["versions"][1]["parentVersionId"], base_id)
+
+    def test_cross_survey_question_usage_and_statistics(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "第一份年龄问卷")
+        first = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            first["_id"],
+            type="number",
+            title="你的年龄",
+            min_number="0",
+            max_number="120",
+            integer_only="1",
+            save_to_bank="1",
+        )
+        family = self.db.question_bank.documents[0]
+        family_id = str(family["_id"])
+        version_id = family["currentVersionId"]
+
+        self.create_survey(self.client, "第二份年龄问卷")
+        second = self.db.surveys.documents[1]
+        response = self.client.post(
+            f"/surveys/{second['_id']}/questions/from-bank",
+            data={"bank_version_id": version_id},
+            follow_redirects=True,
+        )
+        self.assertIn("已从题目库添加题目", response.get_data(as_text=True))
+
+        now = datetime.now(timezone.utc)
+        response_rows = [
+            (first, first["questions"][0]["id"], 18, "age-1"),
+            (first, first["questions"][0]["id"], 30, "age-2"),
+            (second, second["questions"][0]["id"], 30, "age-3"),
+            (second, second["questions"][0]["id"], 42, "age-4"),
+        ]
+        for survey, question_id, value, token in response_rows:
+            self.db.responses.insert_one(
+                {
+                    "surveyId": survey["_id"],
+                    "surveyVersion": survey.get("version", 1),
+                    "respondentId": None,
+                    "anonymous": True,
+                    "participantKey": None,
+                    "submissionToken": token,
+                    "submittedAt": now,
+                    "answers": [
+                        {
+                            "questionId": question_id,
+                            "type": "number",
+                            "value": value,
+                        }
+                    ],
+                    "visitedQuestionIds": [question_id],
+                }
+            )
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/new",
+            data={
+                "base_version_id": version_id,
+                "save_mode": "new",
+                "type": "text",
+                "title": "年龄补充说明",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("新版本已保存", response.get_data(as_text=True))
+        family = self.db.question_bank.documents[0]
+        text_version_id = family["currentVersionId"]
+        self.create_survey(self.client, "第三份文本年龄问卷")
+        third = self.db.surveys.documents[2]
+        self.client.post(
+            f"/surveys/{third['_id']}/questions/from-bank",
+            data={"bank_version_id": text_version_id},
+            follow_redirects=True,
+        )
+        third_question_id = third["questions"][0]["id"]
+        for index, value in enumerate(["30", "未知"], start=1):
+            self.db.responses.insert_one(
+                {
+                    "surveyId": third["_id"],
+                    "surveyVersion": third.get("version", 1),
+                    "respondentId": None,
+                    "anonymous": True,
+                    "participantKey": None,
+                    "submissionToken": f"age-text-{index}",
+                    "submittedAt": now,
+                    "answers": [
+                        {
+                            "questionId": third_question_id,
+                            "type": "text",
+                            "value": value,
+                        }
+                    ],
+                    "visitedQuestionIds": [third_question_id],
+                }
+            )
+
+        response = self.client.post(
+            f"/question-bank/{family_id}/versions/new",
+            data={
+                "base_version_id": version_id,
+                "save_mode": "new",
+                "type": "single_choice",
+                "title": "年龄段",
+                "options": "青年\n中年",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("新版本已保存", response.get_data(as_text=True))
+        family = self.db.question_bank.documents[0]
+        choice_version_id = family["currentVersionId"]
+        self.create_survey(self.client, "第四份年龄段问卷")
+        fourth = self.db.surveys.documents[3]
+        self.client.post(
+            f"/surveys/{fourth['_id']}/questions/from-bank",
+            data={"bank_version_id": choice_version_id},
+            follow_redirects=True,
+        )
+        fourth_question = fourth["questions"][0]
+        choice_young = fourth_question["options"][0]["id"]
+        choice_middle = fourth_question["options"][1]["id"]
+        for index, value in enumerate(
+            [choice_young, choice_middle, choice_young],
+            start=1,
+        ):
+            self.db.responses.insert_one(
+                {
+                    "surveyId": fourth["_id"],
+                    "surveyVersion": fourth.get("version", 1),
+                    "respondentId": None,
+                    "anonymous": True,
+                    "participantKey": None,
+                    "submissionToken": f"age-choice-{index}",
+                    "submittedAt": now,
+                    "answers": [
+                        {
+                            "questionId": fourth_question["id"],
+                            "type": "single_choice",
+                            "value": value,
+                        }
+                    ],
+                    "visitedQuestionIds": [fourth_question["id"]],
+                }
+            )
+
+        page = self.client.get(
+            f"/question-bank/insights/{family_id}"
+        )
+        text = page.get_data(as_text=True)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(str(first["_id"]), text)
+        self.assertIn(str(second["_id"]), text)
+        self.assertIn("跨问卷", text)
+        self.assertIn("分问卷答题分析", text)
+        self.assertIn("青年", text)
+        self.assertIn("平均值", text)
+
+        api = self.client.get(
+            f"/api/v1/question-bank/insights/{family_id}"
+        )
+        payload = api.get_json()
+        self.assertEqual(api.status_code, 200)
+        self.assertEqual(payload["surveyCount"], 4)
+        self.assertEqual(payload["usageCount"], 4)
+        self.assertEqual(payload["answeredCount"], 9)
+        numeric = next(
+            group["numeric"]
+            for group in payload["typeGroups"]
+            if group["type"] == "number"
+        )
+        self.assertEqual(numeric["average"], 30.0)
+        self.assertEqual(numeric["median"], 30.0)
+        text_group = next(
+            group["text"]
+            for group in payload["typeGroups"]
+            if group["type"] == "text"
+        )
+        self.assertEqual(text_group["count"], 2)
+        self.assertEqual(text_group["numeric"]["count"], 1)
+        choice_group = next(
+            group["choice"]
+            for group in payload["typeGroups"]
+            if group["type"] == "single_choice"
+        )
+        choice_counts = {
+            option["label"]: option["count"]
+            for option in choice_group["distribution"]
+        }
+        self.assertEqual(choice_counts, {"青年": 2, "中年": 1})
+        self.assertEqual(len(payload["versionBreakdown"]), 3)
+
+        lookup = self.client.get(
+            "/question-bank/lookup",
+            query_string={"question_id": version_id},
+        )
+        self.assertEqual(lookup.status_code, 302)
+        self.assertIn(
+            f"/question-bank/insights/{version_id}",
+            lookup.headers["Location"],
+        )
+
+        local_question_id = first["questions"][0]["id"]
+        local_page = self.client.get(
+            f"/question-bank/insights/{local_question_id}"
+        )
+        self.assertEqual(local_page.status_code, 200)
+
+        self.client.post("/logout", follow_redirects=True)
+        self.register(self.client, "bob")
+        self.login(self.client, "bob")
+        forbidden = self.client.get(
+            f"/question-bank/insights/{family_id}"
+        )
+        self.assertEqual(forbidden.status_code, 404)
+
+    def test_published_survey_questions_are_read_only(self):
+        self.register(self.client, "alice")
+        self.login(self.client, "alice")
+        self.create_survey(self.client, "只读发布问卷")
+        survey = self.db.surveys.documents[0]
+        self.add_question(
+            self.client,
+            survey["_id"],
+            type="text",
+            title="发布后不可删除",
+            required="1",
+        )
+        question_id = survey["questions"][0]["id"]
+        self.client.post(
+            f"/surveys/{survey['_id']}/publish",
+            follow_redirects=True,
+        )
+        response = self.client.post(
+            f"/surveys/{survey['_id']}/questions/{question_id}/delete",
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(survey["questions"]), 1)
+        self.assertEqual(survey["status"], "published")
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,22 @@ def find_by_id(survey_id):
 def find_by_share_code(share_code):
     return get_db().surveys.find_one({"shareCode": share_code})
 
+def list_by_question_bank(owner_id, bank_id):
+    """返回当前用户问卷中使用了指定题目族的问卷。"""
+
+    return list(
+        get_db()
+        .surveys.find(
+            {
+                "ownerId": owner_id,
+                "questions": {
+                    "$elemMatch": {"sourceBankId": str(bank_id)},
+                },
+            }
+        )
+        .sort("createdAt", -1)
+    )
+
 
 def update_fields(survey_id, fields):
     return get_db().surveys.update_one(

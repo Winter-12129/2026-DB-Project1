@@ -19,6 +19,7 @@ from config import Config
 from logic.routes import bp as logic_bp
 from publishing.routes import bp as publishing_bp
 from questions.routes import bp as questions_bp
+from question_bank.routes import bp as question_bank_bp
 from responses.routes import bp as responses_bp
 from surveys.routes import bp as surveys_bp
 
@@ -34,6 +35,7 @@ def create_app(config_object=Config, database=None):
     app.register_blueprint(analytics_bp)
     app.register_blueprint(publishing_bp)
     app.register_blueprint(questions_bp)
+    app.register_blueprint(question_bank_bp)
     app.register_blueprint(logic_bp)
     app.register_blueprint(responses_bp)
 

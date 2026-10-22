@@ -154,10 +154,77 @@ RESPONSES_VALIDATOR = {
 }
 
 
+QUESTION_BANK_VALIDATOR = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": [
+            "ownerId",
+            "familyKey",
+            "title",
+            "aliases",
+            "aliasKeys",
+            "sharedWith",
+            "currentVersionId",
+            "versions",
+            "createdAt",
+            "updatedAt",
+        ],
+        "properties": {
+            "ownerId": {"bsonType": "objectId"},
+            "familyKey": {"bsonType": "string", "minLength": 1},
+            "title": {"bsonType": "string", "minLength": 1},
+            "aliases": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "aliasKeys": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "sharedWith": {
+                "bsonType": "array",
+                "items": {"bsonType": "objectId"},
+            },
+            "currentVersionId": {"bsonType": "string", "minLength": 1},
+            "versions": {
+                "bsonType": "array",
+                "minItems": 1,
+                "items": {
+                    "bsonType": "object",
+                    "required": [
+                        "id",
+                        "number",
+                        "fingerprint",
+                        "title",
+                        "type",
+                        "options",
+                        "config",
+                        "parentVersionId",
+                        "createdAt",
+                    ],
+                    "properties": {
+                        "id": {"bsonType": "string"},
+                        "number": {"bsonType": "int"},
+                        "fingerprint": {"bsonType": "string"},
+                        "title": {"bsonType": "string"},
+                        "type": {"bsonType": "string"},
+                        "options": {"bsonType": "array"},
+                        "config": {"bsonType": "object"},
+                        "parentVersionId": {"bsonType": ["string", "null"]},
+                        "createdAt": {"bsonType": "date"},
+                    },
+                },
+            },
+            "variants": {
+                "bsonType": "array",
+                "items": {"bsonType": "object"},
+            },
+            "createdAt": {"bsonType": "date"},
+            "updatedAt": {"bsonType": "date"},
+        },
+    }
+}
+
+
 COLLECTION_VALIDATORS = {
     "users": USERS_VALIDATOR,
     "surveys": SURVEYS_VALIDATOR,
     "responses": RESPONSES_VALIDATOR,
+    "question_bank": QUESTION_BANK_VALIDATOR,
 }
 
 

@@ -192,6 +192,33 @@
 
   {% if can_edit %}
   <div class="add-question">
+    <h3>从题目库添加</h3>
+    {% if bank_versions %}
+    <form method="post" action="{{ url_for('questions.add_from_bank', survey_id=survey.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid">
+        <label>选择题库题目
+          <select name="bank_version_id" required>
+            {% for version in bank_versions %}
+              <option value="{{ version.id }}">
+                {{ version.familyTitle }} / v{{ version.number }} · {{ version.title }} · {{ version.typeLabel }}{% if not version.isOwner %}（共享自 {{ version.ownerName }}）{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="required" value="1">
+          添加到本问卷后设为必选
+        </label>
+      </div>
+      <button type="submit">从题库添加</button>
+    </form>
+    {% else %}
+    <p class="muted">题目库还没有内容。可以在下方添加题目时勾选“同时保存到题目库”。</p>
+    {% endif %}
+  </div>
+
+  <div class="add-question">
     <h3>添加题目</h3>
     <form method="post" action="{{ url_for('questions.add', survey_id=survey.id) }}" id="question-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -247,6 +274,14 @@
       <label class="checkbox-row" data-question-fields="number">
         <input type="checkbox" name="integer_only" value="1">
         只能是整数
+      </label>
+
+      <label class="checkbox-row">
+        <input type="checkbox" name="save_to_bank" value="1">
+        同时保存到题目库
+      </label>
+      <label>题库别名（可选，每行一个）
+        <textarea name="bank_aliases" placeholder="例如：你的名字是"></textarea>
       </label>
 
       <button type="submit">添加题目</button>

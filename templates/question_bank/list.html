@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}题目库 · 问卷系统{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>题目库</h1>
+    <p class="muted">保存常用题目、查看版本历史、共享给其他用户，或从题库选择到自己的问卷。</p>
+  </div>
+  <div class="button-row">
+    <a class="button" href="{{ url_for('question_bank.new_family') }}">新建常用题目</a>
+    <a class="button secondary" href="{{ url_for('surveys.index') }}">返回我的问卷</a>
+  </div>
+</div>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>按题目 ID 查询</h2>
+      <p class="muted">支持题目族 ID、版本 ID（ver_ 开头）和问卷内题目 ID（q_ 开头）。</p>
+    </div>
+  </div>
+  <form method="get" action="{{ url_for('question_bank.lookup') }}" class="lookup-form">
+    <label for="question-id">题目 ID
+      <input id="question-id" name="question_id" placeholder="例如：66f... 或 ver_ab12cd34" required>
+    </label>
+    <button type="submit">查询使用情况与跨问卷统计</button>
+  </form>
+  <p class="notice">
+    每个题目族保存一条版本时间线。新建版本不会覆盖旧版本；直接修改会覆盖所选版本，但不会改变已经加入问卷的题目快照。
+    相同题干不会自动语义合并，可以用别名把相似表述归入同一题目族。
+  </p>
+  {% for family in families %}
+  <article class="question-card bank-card">
+    <div class="question-header">
+      <div>
+        <strong>{{ family.title }}</strong>
+        <span class="badge">{{ family.versionCount }} 个版本</span>
+      </div>
+      <div class="button-row">
+        <a class="button secondary" href="{{ url_for('question_bank.insights', reference=family.id) }}">跨问卷统计</a>
+        <form method="post" action="{{ url_for('question_bank.delete', family_id=family.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link-button danger-link">删除题目组</button>
+        </form>
+      </div>
+    </div>
+    {% if family.aliases %}<p class="muted">别名：{{ family.aliases|join(' / ') }}</p>{% endif %}
+
+    <details class="version-editor">
+      <summary>查看版本历史（最新版本优先）</summary>
+      <div class="version-history">
+        {% for version in family.versions %}
+        <div class="version-row {% if version.isCurrent %}current{% endif %}">
+          <div class="version-marker"></div>
+          <div class="version-main">
+            <div>
+              <strong>v{{ version.number }}</strong>
+              {% if version.isCurrent %}<span class="badge">当前版本</span>{% endif %}
+              {% if version.parentVersionNumber %}<span class="muted">基于 v{{ version.parentVersionNumber }}</span>{% endif %}
+
+            </div>
+            <p class="muted">{{ version.createdAt | localdt }} · {{ version.title }} · {{ version.typeLabel }}</p>
+            {% if version.options %}
+            <p class="muted">选项：
+              {% for option in version.options %}{{ option.label }}{% if not loop.last %} / {% endif %}{% endfor %}
+            </p>
+            {% endif %}
+          </div>
+          <div class="version-actions">
+            <a class="button secondary" href="{{ url_for('question_bank.new_version', family_id=family.id, base=version.id, mode='new') }}">新建版本</a>
+            <a class="button secondary" href="{{ url_for('question_bank.new_version', family_id=family.id, base=version.id, mode='replace') }}">直接修改</a>
+            <a class="button secondary" href="{{ url_for('question_bank.insights', reference=version.id) }}">查看统计</a>
+            {% if not version.isCurrent %}
+            <form method="post" action="{{ url_for('question_bank.restore_version', family_id=family.id, version_id=version.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-button">恢复为当前</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+
+    <details class="rule-editor">
+      <summary>共享给其他用户</summary>
+      <form method="post" action="{{ url_for('question_bank.share', family_id=family.id) }}" class="alias-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>输入对方用户名<input name="username" placeholder="例如：bob" required></label>
+        <button type="submit" class="button secondary">共享</button>
+      </form>
+      {% if family.sharedUsers %}
+      <p class="muted">已共享给：</p>
+      {% for shared_user in family.sharedUsers %}
+      <form method="post" action="{{ url_for('question_bank.unshare', family_id=family.id) }}" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="username" value="{{ shared_user.username }}">
+        <button type="submit" class="link-button">移除 {{ shared_user.username }}</button>
+      </form>
+      {% endfor %}
+      {% endif %}
+    </details>
+
+    <form method="post" action="{{ url_for('question_bank.add_aliases', family_id=family.id) }}" class="alias-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="aliases-{{ family.id }}">添加别名（每行一个）</label>
+      <textarea id="aliases-{{ family.id }}" name="aliases" placeholder="例如：你的名字是"></textarea>
+      <button type="submit" class="button secondary">保存别名</button>
+    </form>
+  </article>
+  {% else %}
+  <p class="muted">题目库还没有内容。先在问卷管理页添加题目，并勾选“同时保存到题目库”。</p>
+  {% endfor %}
+</section>
+
+{% if shared_families %}
+<section class="card">
+  <h2>共享给我的题目</h2>
+  <p class="muted">这些题目属于其他用户，你可以在自己的问卷中使用它们的任意版本。</p>
+  {% for family in shared_families %}
+  <article class="question-card bank-card">
+    <div class="question-header">
+      <div><strong>{{ family.title }}</strong><span class="badge">{{ family.versionCount }} 个版本</span></div>
+      <span class="muted">来自 {{ family.ownerName }}</span>
+    </div>
+    <details class="version-editor">
+      <summary>查看版本历史</summary>
+      <div class="version-history">
+        {% for version in family.versions %}
+        <div class="version-row {% if version.isCurrent %}current{% endif %}">
+          <div class="version-marker"></div>
+          <div class="version-main">
+            <div><strong>v{{ version.number }}</strong>
+              {% if version.isCurrent %}<span class="badge">当前版本</span>{% endif %}
+              {% if version.parentVersionNumber %}<span class="muted">基于 v{{ version.parentVersionNumber }}</span>{% endif %}
+            </div>
+            <p class="muted">{{ version.createdAt | localdt }} · {{ version.title }} · {{ version.typeLabel }}</p>
+            {% if version.options %}<p class="muted">选项：{% for option in version.options %}{{ option.label }}{% if not loop.last %} / {% endif %}{% endfor %}</p>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

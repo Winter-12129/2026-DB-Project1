@@ -103,6 +103,11 @@ def _question_stats(question, responses, survey_id=None, survey_version=None):
         ),
         "title": question.get("title", ""),
         "required": bool(question.get("required")),
+        "sourceBankId": question.get("sourceBankId"),
+        "sourceVersionId": (
+            question.get("sourceVersionId")
+            or question.get("sourceVariantId")
+        ),
         "visitedCount": _visited_count(responses, question_id),
         "answeredCount": len(values),
         "options": [],

@@ -81,3 +81,20 @@ def ensure_indexes(db):
         [("surveyId", ASCENDING), ("visitedQuestionIds", ASCENDING)],
         name="visited_question",
     )
+    db.question_bank.create_index(
+        [("ownerId", ASCENDING), ("familyKey", ASCENDING)],
+        unique=True,
+        name="owner_family_key",
+    )
+    db.question_bank.create_index(
+        [("ownerId", ASCENDING), ("aliasKeys", ASCENDING)],
+        name="owner_alias_keys",
+    )
+    db.question_bank.create_index(
+        [("sharedWith", ASCENDING), ("updatedAt", DESCENDING)],
+        name="shared_with_updated",
+    )
+    db.surveys.create_index(
+        [("ownerId", ASCENDING), ("questions.sourceBankId", ASCENDING)],
+        name="owner_question_bank",
+    )

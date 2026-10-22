@@ -14,6 +14,7 @@
       {% if current_user %}
         <span class="muted">{{ current_user.username }}</span>
         <a href="{{ url_for('surveys.index') }}">我的问卷</a>
+        <a href="{{ url_for('question_bank.index') }}">题目库</a>
         <form method="post" action="{{ url_for('auth.logout') }}" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="link-button">退出</button>

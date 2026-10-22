@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}跨问卷统计 · {{ family.title }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">题库题目分析</p>
+    <h1>{{ family.title }}</h1>
+    <p class="muted">
+      查询对象：<code>{{ reference }}</code>
+      {% if selectedVersion %}
+        · 仅统计 v{{ selectedVersion.number }}：{{ selectedVersion.title }}
+      {% else %}
+        · 统计该题目族下所有版本
+      {% endif %}
+    </p>
+  </div>
+  <div class="button-row">
+    <a class="button secondary" href="{{ url_for('question_bank.index') }}">返回题目库</a>
+    <a class="button secondary" href="{{ url_for('question_bank.lookup') }}">查询其他 ID</a>
+  </div>
+</div>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>统计概览</h2>
+      <p class="muted">只统计当前用户有权限查看、并且使用该题目的问卷。</p>
+    </div>
+    <span class="badge">生成于 {{ generatedAt }}</span>
+  </div>
+  <div class="number-summary cross-summary">
+    <div><span class="muted">使用问卷</span><strong>{{ surveyCount }}</strong></div>
+    <div><span class="muted">题目使用记录</span><strong>{{ usageCount }}</strong></div>
+    <div><span class="muted">参与答卷记录</span><strong>{{ submittedCount }}</strong></div>
+    <div><span class="muted">去重答卷</span><strong>{{ uniqueResponseCount }}</strong></div>
+    <div><span class="muted">访问题目</span><strong>{{ visitedCount }}</strong></div>
+    <div><span class="muted">实际回答</span><strong>{{ answeredCount }}</strong></div>
+    <div><span class="muted">回答率</span><strong>{{ "%.1f"|format(answerRate) }}%</strong></div>
+  </div>
+  {% if firstSubmittedAt %}
+    <p class="muted">数据时间范围：{{ firstSubmittedAt }} 至 {{ lastSubmittedAt }}</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>使用该题目的问卷</h2>
+      <p class="muted">表中的“问卷 ID”可以直接用于查询接口或数据库定位。</p>
+    </div>
+  </div>
+  {% if usages %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>问卷 ID</th><th>问卷</th><th>状态</th><th>使用版本</th>
+          <th>问卷内题目 ID</th><th>提交</th><th>访问</th><th>回答</th>
+          <th>回答率</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for usage in usages %}
+        <tr>
+          <td><code>{{ usage.surveyId }}</code></td>
+          <td>{{ usage.surveyTitle }}</td>
+          <td>{{ usage.surveyStatusLabel }}</td>
+          <td>{% if usage.sourceVersionNumber %}v{{ usage.sourceVersionNumber }}{% else %}未知{% endif %}</td>
+          <td><code>{{ usage.localQuestionId }}</code></td>
+          <td>{{ usage.submittedCount }}</td>
+          <td>{{ usage.visitedCount }}</td>
+          <td>{{ usage.answeredCount }}</td>
+          <td>{{ "%.1f"|format(usage.answerRate) }}%</td>
+          <td>
+            <a href="{{ url_for('surveys.detail', survey_id=usage.surveyId) }}">管理</a>
+            ·
+            <a href="{{ url_for('analytics.survey_stats', survey_id=usage.surveyId, questionId=usage.localQuestionId) }}">单卷统计</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="muted">当前用户还没有在自己的问卷中使用这道题。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>分问卷答题分析</h2>
+      <p class="muted">展开每份问卷，查看该题在这份问卷中的实际分布。</p>
+    </div>
+  </div>
+  {% for usage in usages %}
+  <details class="survey-analysis">
+    <summary>
+      {{ usage.surveyTitle }} · {{ usage.answeredCount }}/{{ usage.visitedCount }} 人回答
+    </summary>
+    <p class="muted">问卷 ID：<code>{{ usage.surveyId }}</code> · 本地题目 ID：<code>{{ usage.localQuestionId }}</code></p>
+    {% if usage.questionType in ["single_choice", "multiple_choice"] %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>选项</th><th>次数</th><th>比例</th></tr></thead>
+          <tbody>
+            {% for option in usage.analysis.choice %}
+            <tr><td>{{ option.label }}</td><td>{{ option.count }}</td><td>{{ "%.1f"|format(option.percentage) }}%</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% elif usage.questionType == "number" and usage.analysis.numeric.count %}
+      <p class="muted">有效数字 {{ usage.analysis.numeric.count }} · 平均 {{ usage.analysis.numeric.average }} · 中位数 {{ usage.analysis.numeric.median }} · 最小 {{ usage.analysis.numeric.min }} · 最大 {{ usage.analysis.numeric.max }}</p>
+    {% elif usage.questionType == "text" and usage.analysis.text.count %}
+      <p class="muted">文本答案 {{ usage.analysis.text.count }} 条 · 不同内容 {{ usage.analysis.text.uniqueCount }} 个 · 平均 {{ usage.analysis.text.averageLength }} 字</p>
+      {% if usage.analysis.text.topValues %}
+        <ul class="answer-list">
+          {% for item in usage.analysis.text.topValues %}<li>{{ item.value }}（{{ item.count }} 次）</li>{% endfor %}
+        </ul>
+      {% endif %}
+    {% else %}
+      <p class="muted">这份问卷暂无该题答案。</p>
+    {% endif %}
+  </details>
+  {% endfor %}
+</section>
+
+{% if versionBreakdown %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>版本使用情况</h2>
+      <p class="muted">同一题目族的不同版本独立统计，但同时参与总体分析。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>版本</th><th>版本 ID</th><th>使用问卷</th><th>使用记录</th><th>访问</th><th>回答</th></tr></thead>
+      <tbody>
+        {% for version in versionBreakdown %}
+        <tr>
+          <td>{% if version.versionNumber %}v{{ version.versionNumber }}{% else %}未知{% endif %} · {{ version.versionTitle }}</td>
+          <td><code>{{ version.versionId }}</code></td>
+          <td>{{ version.surveyCount }}</td>
+          <td>{{ version.usageCount }}</td>
+          <td>{{ version.visitedCount }}</td>
+          <td>{{ version.answeredCount }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% for group in typeGroups %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>{{ group.typeLabel }}题总体分析</h2>
+      <p class="muted">使用记录 {{ group.usageCount }} 条 · 访问 {{ group.visitedCount }} · 回答 {{ group.answeredCount }}</p>
+    </div>
+  </div>
+
+  {% if group.type in ["single_choice", "multiple_choice"] %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>选项</th><th>选择次数</th><th>回答者比例</th><th>分布</th></tr></thead>
+        <tbody>
+          {% for option in group.choice.distribution %}
+          <tr>
+            <td>{{ option.label }}</td>
+            <td>{{ option.count }}</td>
+            <td>{{ "%.1f"|format(option.percentage) }}%</td>
+            <td><div class="distribution-bar"><span style="width: {{ option.percentage }}%"></span></div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if group.choice.isMultiple %}
+      <p class="muted">共选择 {{ group.choice.totalSelections }} 次，人均选择 {{ group.choice.averageSelections }} 项；多选比例之和可以超过 100%。</p>
+    {% endif %}
+  {% elif group.type == "number" %}
+    {% set numeric = group.numeric %}
+    {% if numeric.count %}
+    <div class="number-summary cross-summary">
+      <div><span class="muted">有效数字</span><strong>{{ numeric.count }}</strong></div>
+      <div><span class="muted">平均值</span><strong>{{ numeric.average }}</strong></div>
+      <div><span class="muted">中位数</span><strong>{{ numeric.median }}</strong></div>
+      <div><span class="muted">标准差</span><strong>{{ numeric.standardDeviation }}</strong></div>
+      <div><span class="muted">最小值</span><strong>{{ numeric.min }}</strong></div>
+      <div><span class="muted">最大值</span><strong>{{ numeric.max }}</strong></div>
+      <div><span class="muted">25% 分位</span><strong>{{ numeric.p25 }}</strong></div>
+      <div><span class="muted">75% 分位</span><strong>{{ numeric.p75 }}</strong></div>
+      <div><span class="muted">90% 分位</span><strong>{{ numeric.p90 }}</strong></div>
+      <div><span class="muted">整数 / 小数</span><strong>{{ numeric.integerCount }} / {{ numeric.decimalCount }}</strong></div>
+    </div>
+    <h3>数值区间分布</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>区间</th><th>数量</th><th>比例</th></tr></thead>
+        <tbody>
+          {% for bucket in numeric.histogram %}
+          <tr><td>{{ bucket.label }}</td><td>{{ bucket.count }}</td><td>{{ "%.1f"|format(bucket.percentage) }}%</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="muted">暂无有效数字答案。</p>
+    {% endif %}
+  {% elif group.type == "text" %}
+    {% set text = group.text %}
+    <div class="number-summary cross-summary">
+      <div><span class="muted">文本答案</span><strong>{{ text.count }}</strong></div>
+      <div><span class="muted">不同内容</span><strong>{{ text.uniqueCount }}</strong></div>
+      <div><span class="muted">平均字数</span><strong>{{ text.averageLength }}</strong></div>
+      <div><span class="muted">最短 / 最长</span><strong>{{ text.minLength }} / {{ text.maxLength }}</strong></div>
+    </div>
+    {% if text.topValues %}
+      <h3>高频答案</h3>
+      <ul class="answer-list">
+        {% for item in text.topValues %}<li>{{ item.value }}（{{ item.count }} 次）</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if text.numeric.count %}
+      <p class="muted">文本中可识别数字 {{ text.numeric.count }} 个，平均值 {{ text.numeric.average }}，中位数 {{ text.numeric.median }}。</p>
+    {% endif %}
+    {% if text.answers %}
+      <details>
+        <summary>查看全部 {{ text.answers|length }} 条文本答案</summary>
+        <ul class="answer-list">
+          {% for answer in text.answers %}<li>{{ answer }}</li>{% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  {% endif %}
+</section>
+{% else %}
+<section class="card"><p class="muted">暂时没有可统计的回答。</p></section>
+{% endfor %}
+
+<section class="card">
+  <h2>数据口径</h2>
+  <ul class="plain-list">
+    <li>“使用问卷”只包含当前登录用户自己的问卷，避免题目共享后泄露其他用户的答卷数据。</li>
+    <li>跨问卷统计通过 `sourceBankId + sourceVersionId` 映射到每份问卷自己的题目 ID，再读取该题答案。</li>
+    <li>访问人数按 `visitedQuestionIds` 计算，回答人数按实际答案计算；被跳转规则绕过的题目不会进入分母。</li>
+    <li>同一份问卷如果使用了同一题目的多个版本，会产生多条使用记录；去重答卷按“问卷 + 答卷”计算。</li>
+    <li>JSON API：<code>/api/v1/question-bank/insights/{{ reference }}</code></li>
+  </ul>
+</section>
+{% endblock %}

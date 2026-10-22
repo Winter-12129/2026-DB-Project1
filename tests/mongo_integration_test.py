@@ -80,6 +80,8 @@ def main():
             "required": True,
             "options": [],
             "config": {"min": 0, "max": 100, "integerOnly": False},
+            "sourceBankId": "bank_explain001",
+            "sourceVersionId": "ver_explain001",
         }
         survey = {
             "_id": survey_id,
@@ -138,6 +140,45 @@ def main():
             )
         db.responses.insert_many(responses)
 
+        bank_owner_id = ObjectId()
+        bank_version_id = "ver_explain001"
+        question_bank = {
+            "ownerId": bank_owner_id,
+            "familyKey": "validatorexplain",
+            "title": "Validator 题库测试",
+            "aliases": [],
+            "aliasKeys": [],
+            "sharedWith": [ObjectId()],
+            "currentVersionId": bank_version_id,
+            "versions": [
+                {
+                    "id": bank_version_id,
+                    "number": 1,
+                    "fingerprint": "fingerprint-1",
+                    "title": "Validator 题库测试",
+                    "type": "text",
+                    "options": [],
+                    "config": {},
+                    "parentVersionId": None,
+                    "createdAt": now,
+                }
+            ],
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        db.question_bank.insert_one(question_bank)
+
+        invalid_bank = dict(question_bank)
+        invalid_bank.pop("_id")
+        invalid_bank.pop("versions")
+        invalid_bank["familyKey"] = "invalid-bank"
+        try:
+            db.question_bank.insert_one(invalid_bank)
+        except WriteError:
+            print("[OK] MongoDB Validator 拒绝缺少 versions 的题库文档")
+        else:
+            raise AssertionError("Validator 没有拒绝非法题库文档")
+
         # 数据库级 validator 应拒绝缺少 submissionToken 的答卷。
         invalid_response = dict(responses[0])
         invalid_response.pop("_id")
@@ -152,6 +193,21 @@ def main():
 
         survey_plan = db.surveys.find(
             {"shareCode": survey["shareCode"]}
+        ).explain()
+        shared_bank_plan = (
+            db.question_bank.find(
+                {"sharedWith": question_bank["sharedWith"][0]}
+            )
+            .sort("updatedAt", -1)
+            .explain()
+        )
+        survey_question_bank_plan = db.surveys.find(
+            {
+                "ownerId": survey["ownerId"],
+                "questions": {
+                    "$elemMatch": {"sourceBankId": "bank_explain001"}
+                },
+            }
         ).explain()
         response_plan = (
             db.responses.find(
@@ -196,6 +252,14 @@ def main():
         print(
             "[OK] surveyVersion 查询计划：",
             dumps(execution_summary(response_plan)),
+        )
+        print(
+            "[OK] sharedWith 查询计划：",
+            dumps(execution_summary(shared_bank_plan)),
+        )
+        print(
+            "[OK] 题库题目使用问卷查询计划：",
+            dumps(execution_summary(survey_question_bank_plan)),
         )
     finally:
         client.drop_database(DB_NAME)

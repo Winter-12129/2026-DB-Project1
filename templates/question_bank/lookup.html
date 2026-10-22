@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}题目 ID 查询 · 问卷系统{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">题目库 · ID 查询</p>
+  <h1>查询题库题目</h1>
+  <p class="muted">输入题目族 ID、版本 ID 或问卷内题目 ID，可以查看它被哪些问卷使用，以及跨问卷的总体回答情况。</p>
+  <form method="get" action="{{ url_for('question_bank.lookup') }}" class="lookup-form">
+    <label for="question-id">题目 ID
+      <input id="question-id" name="question_id" placeholder="题目族 ObjectId、ver_xxx 或 q_xxx" required>
+    </label>
+    <button type="submit">开始查询</button>
+  </form>
+  <p class="muted"><a href="{{ url_for('question_bank.index') }}">返回题目库</a></p>
+</section>
+{% endblock %}

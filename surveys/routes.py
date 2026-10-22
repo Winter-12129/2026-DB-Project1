@@ -12,6 +12,7 @@ from auth.guards import login_required
 from common.csrf import validate_csrf
 from common.errors import AppError
 from logic import service as logic_service
+from question_bank import service as bank_service
 from questions import service as question_service
 from surveys import service as survey_service
 
@@ -50,6 +51,7 @@ def detail(survey_id):
         "surveys/detail.html",
         survey=survey,
         questions=questions,
+        bank_versions=bank_service.flatten_versions(g.user["_id"]),
         can_edit=survey["status"] == "draft",
     )
 
